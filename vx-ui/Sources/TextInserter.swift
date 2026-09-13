@@ -3,11 +3,17 @@ import Carbon
 
 enum TextInsertionError: LocalizedError {
     case emptyText
+    case clipboardUnavailable
+    case clipboardChanged
 
     var errorDescription: String? {
         switch self {
         case .emptyText:
             return "Nothing to insert."
+        case .clipboardUnavailable:
+            return "Could not preserve the clipboard contents. Nothing was pasted."
+        case .clipboardChanged:
+            return "The clipboard changed while preparing the dictation. Please try again."
         }
     }
 }
@@ -30,6 +36,8 @@ enum TextSubmitBehavior: Equatable {
 }
 
 enum TextInserter {
+    private static let transcriptionPasteboard = TranscriptionPasteboard(pasteboard: .general)
+
     static func insert(_ text: String, submit: Bool = false) throws {
         try insert(text, submitBehavior: submit ? .returnKey : .none)
     }
@@ -45,12 +53,8 @@ enum TextInserter {
             throw TextInsertionError.emptyText
         }
 
-        let pasteboard = NSPasteboard.general
-        let previous = pasteboard.string(forType: .string)
         let pastedText = pasteboardPayload(for: trimmed, submitBehavior: submitBehavior)
-
-        pasteboard.clearContents()
-        pasteboard.setString(pastedText, forType: .string)
+        let restoreClipboard = try transcriptionPasteboard.prepare(pastedText)
 
         simulatePaste()
 
@@ -61,12 +65,7 @@ enum TextInserter {
         }
 
         let restoreDelay: TimeInterval = submitBehavior == .none ? 0.25 : 0.55
-        DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay) {
-            pasteboard.clearContents()
-            if let previous {
-                pasteboard.setString(previous, forType: .string)
-            }
-        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + restoreDelay, execute: restoreClipboard)
     }
 
     private static func simulatePaste() {
